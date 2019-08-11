@@ -1,0 +1,617 @@
+package xyz.onepunch.client.modules.impl.combat;
+
+import de.Hero.settings.Setting;
+import net.minecraft.client.Minecraft;
+import net.minecraft.entity.Entity;
+import net.minecraft.entity.EntityLivingBase;
+import net.minecraft.entity.monster.EntityMob;
+import net.minecraft.entity.passive.EntityAnimal;
+import net.minecraft.entity.passive.EntityBat;
+import net.minecraft.entity.passive.EntitySquid;
+import net.minecraft.entity.passive.EntityVillager;
+import net.minecraft.entity.player.EntityPlayer;
+import net.minecraft.item.ItemBlock;
+import net.minecraft.item.ItemSword;
+import net.minecraft.network.play.client.C02PacketUseEntity;
+import net.minecraft.network.play.client.C07PacketPlayerDigging;
+import net.minecraft.network.play.client.C08PacketPlayerBlockPlacement;
+import net.minecraft.network.play.client.C0BPacketEntityAction;
+import net.minecraft.util.BlockPos;
+import net.minecraft.util.EnumFacing;
+import net.minecraft.util.EnumParticleTypes;
+import net.minecraft.util.MathHelper;
+import xyz.onepunch.client.OnePunch;
+import xyz.onepunch.client.event.EventManager;
+import xyz.onepunch.client.event.EventTarget;
+import xyz.onepunch.client.event.events.EventPostMotionUpdate;
+import xyz.onepunch.client.event.events.EventPreMotionUpdate;
+import xyz.onepunch.client.event.events.EventUpdate;
+import xyz.onepunch.client.modules.Category;
+import xyz.onepunch.client.modules.Module;
+import xyz.onepunch.client.utils.CombatUtil;
+import xyz.onepunch.client.utils.RayTraceUtil;
+import xyz.onepunch.client.utils.TimeHelper;
+import xyz.onepunch.client.utils.friendmanager.FriendManager;
+
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.Iterator;
+import java.util.Random;
+import java.util.concurrent.ThreadLocalRandom;
+
+public class KillAura
+        extends Module
+{
+    public ArrayList targets = new ArrayList();
+    public ArrayList attackedTargets = new ArrayList();
+    private ArrayList<EntityLivingBase> antiBot = new ArrayList();
+    public static EntityLivingBase curTarget = null;
+    public static EntityLivingBase curBot = null;
+    public static EntityLivingBase lastTarget = null;
+    private TimeHelper test = new TimeHelper();
+    private boolean doBlock = false;
+    private boolean unBlock = false;
+    private Random random = new Random();
+    private long lastMs;
+    private int delay = 0;
+    private float curYaw = 0.0F;
+    private float curPitch = 0.0F;
+    private int tick = 0;
+    private int blockDelay = 0;
+    private int antiBotDelay = 0;
+    private int autoblock;
+
+    public KillAura()
+    {
+        super("KillAura", "KillAura", 0, Category.COMBAT);
+    }
+
+    /*public void setup()
+    {
+        OnePunch.instance.setmgr.rSetting(new Setting("AutoBlock", this, false));
+        OnePunch.instance.setmgr.rSetting(new Setting("Aimbot", this, true));
+        OnePunch.instance.setmgr.rSetting(new Setting("Slowdown", this, true));
+        OnePunch.instance.setmgr.rSetting(new Setting("Range", this, 3.8D, 1.0D, 7.0D, false));
+        OnePunch.instance.setmgr.rSetting(new Setting("Attack Delay", this, 120.0D, 0.0D, 1000.0D, true));
+        OnePunch.instance.setmgr.rSetting(new Setting("Attack Random Delay", this, true));
+        OnePunch.instance.setmgr.rSetting(new Setting("Attack Players", this, true));
+        OnePunch.instance.setmgr.rSetting(new Setting("Attack Animals", this, true));
+        OnePunch.instance.setmgr.rSetting(new Setting("Attack Mobs", this, true));
+        OnePunch.instance.setmgr.rSetting(new Setting("RayTrace", this, true));
+        OnePunch.instance.setmgr.rSetting(new Setting("Crack", this, true));
+        OnePunch.instance.setmgr.rSetting(new Setting("Crack Amount", this, 3.0D, 1.0D, 5.0D, false));
+        OnePunch.instance.setmgr.rSetting(new Setting("Entity ID", this, 2.0D, 1.0D, 5.0D, false));
+        OnePunch.instance.setmgr.rSetting(new Setting("Entity ID Check", this, true));
+        OnePunch.instance.setmgr.rSetting(new Setting("Switch Delay", this, 0.0D, 0.0D, 10.0D, true));
+        OnePunch.instance.setmgr.rSetting(new Setting("Max Targets", this, 1.0D, 1.0D, 20.0D, true));
+        OnePunch.instance.setmgr.rSetting(new Setting("Attack In Inventory", this, true));
+        OnePunch.instance.setmgr.rSetting(new Setting("Attack Invisibles", this, false));
+    }
+
+    @EventTarget
+    public void onPre(EventPreMotionUpdate event)
+    {
+        //if ((!OnePunch.instance.moduleManager.getModuleByName("Scaffold").isToggled()) || (
+                //(!OnePunch.instance.moduleManager.getModuleByName("Tower").isToggled()) &&
+                        //(!(mc.thePlayer.getHeldItem().getItem() instanceof ItemBlock)))) {
+            if ((!OnePunch.instance.setmgr.getSettingByName("Attack In Inventory").getValBoolean()) &&
+                    (mc.currentScreen != null))
+            {
+                this.lastMs = (System.currentTimeMillis() + 1000L);
+            }
+            else
+            {
+                this.doBlock = false;
+                clear();
+                findTargets(event);
+                setCurTarget();
+                if ((OnePunch.instance.setmgr.getSettingByName("RayTrace").getValBoolean()) && (curTarget != null))
+                {
+                    RayTraceUtil rand = new RayTraceUtil(curTarget);
+                    if (rand.getEntity() != curTarget) {
+                        curBot = rand.getEntity();
+                    }
+                }
+                if ((OnePunch.instance.setmgr.getSettingByName("Better AntiBot").getValBoolean()) && (curTarget.onGround) &&
+                        (!this.antiBot.contains(curTarget))) {
+                    this.antiBot.add(curTarget);
+                }
+                if (curTarget != null)
+                {
+                    if (OnePunch.instance.setmgr.getSettingByName("Slowdown").getValBoolean())
+                    {
+                        mc.thePlayer.setSprinting(false);
+                        if (!mc.thePlayer.isSprinting())
+                        {
+                            mc.thePlayer.motionX *= 0.7D;
+                            mc.thePlayer.motionZ *= 0.7D;
+                        }
+                    }
+                    switchDelay();
+                    Random rand1 = new Random();
+                    if (this.tick == 0)
+                    {
+                        doAttack();
+                        lastTarget = curTarget;
+                        event.pitch = this.curPitch;
+
+                        event.yaw = (this.curYaw + ThreadLocalRandom.current().nextInt(5, 10));
+                    }
+                    else
+                    {
+                        event.yaw =
+                                (mc.thePlayer.rotationYaw + (this.curYaw + ThreadLocalRandom.current().nextInt(5 - (int)mc.thePlayer.rotationYaw, 10) / 2.0F));
+                    }
+                }
+                else
+                {
+                    this.targets.clear();
+                    this.attackedTargets.clear();
+                    this.lastMs = System.currentTimeMillis();
+                    if (this.unBlock)
+                    {
+                        mc.getNetHandler().addToSendQueue(new C07PacketPlayerDigging(
+                                C07PacketPlayerDigging.Action.RELEASE_USE_ITEM, BlockPos.ORIGIN, EnumFacing.DOWN));
+                        mc.thePlayer.itemInUseCount = 0;
+                        this.unBlock = false;
+                    }
+                }
+            }
+        //}
+    }
+
+    private void switchDelay()
+    {
+        if ((lastTarget != null) && (lastTarget != curTarget)) {
+            this.tick += 1;
+        } else {
+            this.tick = 0;
+        }
+        if (this.tick > OnePunch.instance.setmgr.getSettingByName("Switch Delay").getValDouble() + (OnePunch.instance.setmgr.getSettingByName("Attack Random Delay").getValBoolean() ?
+
+                0 :
+                0)) {
+            this.tick = 0;
+        }
+    }
+
+    private void setRotation() {
+        float[] rotations = CombatUtil.getRotations(curTarget);
+        this.curYaw = (rotations[0] + this.random.nextInt(15) - 8.0F
+                + ((float) curTarget.motionX + (float) -curTarget.motionZ) * 3.0F);
+        this.curPitch = (rotations[1] + this.random.nextInt(10) - 5.0F);
+        if (this.curPitch > 90.0F) {
+            this.curPitch = 90.0F;
+        } else if (this.curPitch < -90.0F) {
+            this.curPitch = -90.0F;
+        }
+    }
+
+    private void doAttack() {
+        setRotation();
+        byte ticks = 1;
+        byte MAX_TICK = 50;
+        if ((this.tick == 0) && (System.currentTimeMillis() - this.lastMs > this.delay)
+                && (System.currentTimeMillis() - this.lastMs < this.delay + ticks * MAX_TICK)) {
+            boolean miss = this.random.nextInt(50) + 1 == 38;
+            if ((mc.thePlayer.isBlocking()) || ((mc.thePlayer.getHeldItem() != null)
+                    && ((mc.thePlayer.getHeldItem().getItem() instanceof ItemSword))
+                    && (OnePunch.instance.setmgr.getSettingByName("AutoBlock").getValBoolean()))) {
+                mc.getNetHandler().addToSendQueue(new C07PacketPlayerDigging(
+                        C07PacketPlayerDigging.Action.RELEASE_USE_ITEM, BlockPos.ORIGIN, EnumFacing.DOWN));
+                this.unBlock = false;
+            }
+            if ((!mc.thePlayer.isBlocking()) && (!OnePunch.instance.setmgr.getSettingByName("AutoBlock").getValBoolean())
+                    && (mc.thePlayer.itemInUseCount > 0)) {
+                mc.thePlayer.itemInUseCount = 0;
+            }
+            attack(miss);
+            this.doBlock = true;
+            if (!miss) {
+                this.attackedTargets.add(curTarget);
+            }
+        }
+        if (System.currentTimeMillis() - this.lastMs > this.delay + ticks * MAX_TICK) {
+            this.lastMs = System.currentTimeMillis();
+            this.delay =
+
+                    ((int) (OnePunch.instance.setmgr.getSettingByName("Attack Delay").getValDouble()
+                            + (OnePunch.instance.setmgr.getSettingByName("Attack Random Delay").getValBoolean()
+                            ? this.random.nextInt(100)
+                            : 0.0D))
+                            - ticks * MAX_TICK);
+            if (this.delay < 0) {
+                this.delay = 0;
+            }
+        }
+    }
+
+    @EventTarget
+    public void onPost(EventPostMotionUpdate event)
+    {
+        if ((curTarget != null) && (((mc.thePlayer.getHeldItem() != null) &&
+                ((mc.thePlayer.getHeldItem().getItem() instanceof ItemSword)) &&
+                (OnePunch.instance.setmgr.getSettingByName("AutoBlock").getValBoolean())) || (
+                (mc.thePlayer.isBlocking()) && (this.doBlock))))
+        {
+            if (this.autoblock < 2)
+            {
+                mc.thePlayer.itemInUseCount = mc.thePlayer.getHeldItem().getMaxItemUseDuration();
+                mc.getNetHandler().addToSendQueue(new C08PacketPlayerBlockPlacement(new BlockPos(-1, -1, -1), 255,
+                        mc.thePlayer.inventory.getCurrentItem(), 0.0F, 0.0F, 0.0F));
+            }
+            else
+            {
+                mc.thePlayer.itemInUseCount = 0;
+            }
+            if (this.autoblock > 2) {
+                this.autoblock = 0;
+            }
+            this.autoblock += 1;
+            this.unBlock = true;
+        }
+    }
+
+    private void attack(boolean fake)
+    {
+        if ((mc.thePlayer.fallDistance > 0.0F) && (!mc.thePlayer.onGround)) {
+            mc.thePlayer.onCriticalHit(curTarget);
+        }
+        mc.thePlayer.swingItem();
+        if (!fake)
+        {
+            this.doBlock = true;
+            if (OnePunch.instance.moduleManager.getModuleByName("SuperKnockback").isToggled())
+            {
+                mc.thePlayer.sendQueue.addToSendQueue(
+                        new C0BPacketEntityAction(mc.thePlayer, C0BPacketEntityAction.Action.STOP_SPRINTING));
+                mc.thePlayer.sendQueue.addToSendQueue(
+                        new C0BPacketEntityAction(mc.thePlayer, C0BPacketEntityAction.Action.START_SPRINTING));
+                mc.thePlayer.sendQueue.addToSendQueue(
+                        new C02PacketUseEntity(curBot != null ? curBot : curTarget, C02PacketUseEntity.Action.ATTACK));
+                mc.thePlayer.sendQueue.addToSendQueue(
+                        new C0BPacketEntityAction(mc.thePlayer, C0BPacketEntityAction.Action.STOP_SPRINTING));
+            }
+            else
+            {
+                mc.thePlayer.sendQueue.addToSendQueue(
+                        new C02PacketUseEntity(curBot != null ? curBot : curTarget, C02PacketUseEntity.Action.ATTACK));
+            }
+        }
+        if (OnePunch.instance.setmgr.getSettingByName("Crack").getValBoolean()) {
+            for (int i = 0; i < (int)OnePunch.instance.setmgr.getSettingByName("Crack Amount").getValDouble(); i++) {
+                mc.effectRenderer.emitParticleAtEntity(curBot != null ? curBot : curTarget, EnumParticleTypes.CRIT);
+            }
+        }
+    }
+
+    private void setCurTarget()
+    {
+        Iterator var2 = this.targets.iterator();
+        while (var2.hasNext())
+        {
+            EntityLivingBase ent = (EntityLivingBase)var2.next();
+            if (!this.attackedTargets.contains(ent))
+            {
+                curTarget = ent;
+                break;
+            }
+            if (this.attackedTargets.size() == this.targets.size())
+            {
+                if (this.attackedTargets.size() > 0) {
+                    this.attackedTargets.clear();
+                }
+                setCurTarget();
+            }
+        }
+    }
+
+    private void clear()
+    {
+        curTarget = null;
+        curBot = null;
+        Iterator var2 = this.targets.iterator();
+        while (var2.hasNext())
+        {
+            EntityLivingBase ent = (EntityLivingBase)var2.next();
+            if (!isValidEntity(ent))
+            {
+                this.targets.remove(ent);
+                if (this.attackedTargets.contains(ent)) {
+                    this.attackedTargets.remove(ent);
+                }
+            }
+        }
+    }
+
+    private void findTargets(EventPreMotionUpdate event)
+    {
+        int maxSize = (int)OnePunch.instance.setmgr.getSettingByName("Max Targets").getValDouble();
+        for (Object o : mc.theWorld.loadedEntityList)
+        {
+            EntityLivingBase curEnt;
+            if (((o instanceof EntityLivingBase)) && (isValidEntity(curEnt = (EntityLivingBase)o)) &&
+                    (!this.targets.contains(curEnt))) {
+                this.targets.add(curEnt);
+            }
+            if (this.targets.size() >= maxSize) {
+                break;
+            }
+        }
+        this.targets.sort(new Comparator()
+        {
+            public int compare(Object ent1, Object ent2)
+            {
+                float e1 = CombatUtil.getRotations((net.minecraft.entity.Entity)ent1)[0];
+                float e2;
+                if (e1 < (e2 = CombatUtil.getRotations((net.minecraft.entity.Entity)ent2)[0])) {
+                    return 1;
+                }
+                if (e1 != e2) {
+                    return -1;
+                }
+                return 0;
+            }
+        });
+    }
+
+    private boolean isValidEntity(EntityLivingBase ent) {
+        return ent == null ? false
+                : (ent == this.mc.thePlayer ? false
+                : (ent instanceof EntityPlayer
+                && !OnePunch.instance.setmgr.getSettingByName("Attack Players").getValBoolean()
+                ? false
+                : ((ent instanceof EntityAnimal || ent instanceof EntitySquid)
+                && !OnePunch.instance.setmgr.getSettingByName("Attack Animals")
+                .getValBoolean()
+                ? false
+                : ((OnePunch.instance.setmgr
+                .getSettingByName("Better AntiBot")
+                .getValBoolean() && !antiBot.contains(ent))
+                ? false
+                : ((ent instanceof EntityMob
+                || ent instanceof EntityVillager
+                || ent instanceof EntityBat)
+                && !OnePunch.instance.setmgr
+                .getSettingByName(
+                        "Attack Mobs")
+                .getValBoolean()
+                ? false
+                : ((double) this.mc.thePlayer
+                .getDistanceToEntity(
+                        ent) > OnePunch.instance.setmgr
+                .getSettingByName(
+                        "Range")
+                .getValDouble()
+                ? false
+                : (ent instanceof EntityPlayer
+                && FriendManager
+                .isFriend(
+                        ent.getName())
+                && !OnePunch.instance.moduleManager
+                .getModuleByName(
+                        "NoFriends")
+                .isToggled()
+                ? false
+                : (!ent.isDead
+                // 0.0F)
+                ? (ent.isInvisible()
+                && !OnePunch.instance.setmgr
+                .getSettingByName(
+                        "Attack Invisibles")
+                .getValBoolean()
+                ? false
+                : (OnePunch.instance.setmgr
+                .getSettingByName(
+                        "Entity ID Check")
+                .getValBoolean()
+                && (double) ent
+                .getEntityId() > OnePunch.instance.setmgr
+                .getSettingByName(
+                        "Entity ID")
+                .getValDouble()
+                * 1000000.0D
+                ? false
+                : (this.mc.thePlayer.isDead
+                ? false
+                : !(ent instanceof EntityPlayer)
+                || !Teams
+                .isEnemy(
+                        (EntityPlayer) ent))))
+                : false))))))));
+    }
+
+    public void onEnable()
+    {
+        this.curYaw = mc.thePlayer.rotationYaw;
+        this.curPitch = mc.thePlayer.rotationPitch;
+        TimeHelper.reset();
+        EventManager.register(this);
+    }
+
+    public void onDisable()
+    {
+        this.targets.clear();
+        this.attackedTargets.clear();
+        curTarget = null;
+        mc.thePlayer.itemInUseCount = 0;
+        mc.getNetHandler().addToSendQueue(new C07PacketPlayerDigging(
+                C07PacketPlayerDigging.Action.RELEASE_USE_ITEM, BlockPos.ORIGIN, EnumFacing.DOWN));
+        EventManager.unregister(this);
+    }
+
+    private float getYawDifference(float yaw, EntityLivingBase target)
+    {
+        return CombatUtil.getYawDifference(yaw, CombatUtil.getRotations(target)[0]);
+    }
+
+    private void attack(EntityPlayer entityPlayer) {
+        if(entityPlayer == mc.thePlayer) return;
+        //mc.thePlayer.posX = entityPlayer.posX;
+        //mc.thePlayer.posY = entityPlayer.posY;
+        //mc.thePlayer.posZ = entityPlayer.posZ;
+        mc.thePlayer.swingItem();
+        mc.mouseHelper.grabMouseCursor();
+        mc.mouseHelper.deltaX += 5;
+        mc.mouseHelper.deltaY += 5;
+        faceEntity(entityPlayer);
+        mc.playerController.attackEntity(mc.thePlayer, entityPlayer);
+    }
+
+    @Override
+    public void onDisable() {
+        super.onDisable();
+        delay = 0;
+    }
+
+    public static float[] getRotationsNeeded(Entity entity)
+    {
+        if(entity == null)
+            return null;
+        double diffX = entity.posX - Minecraft.getMinecraft().thePlayer.posX;
+        double diffY;
+        if(entity instanceof EntityLivingBase)
+        {
+            EntityLivingBase entityLivingBase = (EntityLivingBase)entity;
+            diffY =
+                    entityLivingBase.posY
+                            + entityLivingBase.getEyeHeight()
+                            * 0.9
+                            - (Minecraft.getMinecraft().thePlayer.posY + Minecraft
+                            .getMinecraft().thePlayer.getEyeHeight());
+        }else
+            diffY =
+                    (entity.getEntityBoundingBox().minY + entity.getEntityBoundingBox().maxY)
+                            / 2.0D
+                            - (Minecraft.getMinecraft().thePlayer.posY + Minecraft
+                            .getMinecraft().thePlayer.getEyeHeight());
+        double diffZ = entity.posZ - Minecraft.getMinecraft().thePlayer.posZ;
+        double dist = MathHelper.sqrt_double(diffX * diffX + diffZ * diffZ);
+        float yaw =
+                (float)(Math.atan2(diffZ, diffX) * 180.0D / Math.PI) - 90.0F;
+        float pitch = (float)-(Math.atan2(diffY, dist) * 180.0D / Math.PI);
+        return new float[]{
+                Minecraft.getMinecraft().thePlayer.rotationYaw
+                        + MathHelper.wrapAngleTo180_float(yaw
+                        - Minecraft.getMinecraft().thePlayer.rotationYaw),
+                Minecraft.getMinecraft().thePlayer.rotationPitch
+                        + MathHelper.wrapAngleTo180_float(pitch
+                        - Minecraft.getMinecraft().thePlayer.rotationPitch)};
+
+    }
+
+    public static void faceEntity(EntityLivingBase entity)
+    {
+        float[] rotations = getRotationsNeeded(entity);
+        if (rotations != null)
+        {
+            Minecraft.getMinecraft().thePlayer.rotationYaw = rotations[0];
+            Minecraft.getMinecraft().thePlayer.rotationPitch = rotations[1] +8;
+        }
+    }*/
+
+    @java.lang.Override
+    public void setup() {
+        ArrayList<String> options = new ArrayList<>();
+        OnePunch.instance.setmgr.rSetting(new Setting("Aimbot", this, true));
+    }
+
+    @EventTarget
+    public void onUpdate(EventUpdate event) {
+        aura();
+    }
+
+    int delay;
+
+    private void aura() {
+        this.setSettingName("Closest");
+        List<EntityPlayer> player = mc.theWorld.playerEntities;
+        delay++;
+
+        for(int count = 0; count < player.size(); count++) {
+            player.sort(new Comparator<EntityPlayer>() {
+                @Override
+                public int compare(EntityPlayer o1, EntityPlayer o2) {
+                    if(mc.thePlayer.getDistanceToEntity(o1) > mc.thePlayer.getDistanceToEntity(o2)) return -1;
+                    if(mc.thePlayer.getDistanceToEntity(o1) < mc.thePlayer.getDistanceToEntity(o2)) return 1;
+                    return 0;
+                }
+            });
+            if(player == mc.thePlayer) return;
+            //Random random = new Random();
+            //int rand = random.nextInt(5);
+            //if(rand < 1) return;
+            if(mc.thePlayer.getDistanceToEntity((EntityPlayer)player.get(count)) < 4.25){
+                if(delay >= 3) {
+                    attack(player.get(count));
+                    delay = 0;
+                }
+            }
+        }
+
+    }
+
+    private void attack(EntityPlayer entityPlayer) {
+        if(entityPlayer == mc.thePlayer) return;
+/*@AURA { TP } { UNDONE } { WORKS } { BYPASSES: NOT EVEN VANILLA}
+        mc.thePlayer.posX = entityPlayer.posX;
+        mc.thePlayer.posY = entityPlayer.posY;
+        mc.thePlayer.posZ = entityPlayer.posZ;
+
+ */
+        mc.thePlayer.swingItem();
+        mc.mouseHelper.grabMouseCursor();
+        mc.mouseHelper.deltaX += 5;
+        mc.mouseHelper.deltaY += 5;
+        faceEntity(entityPlayer);
+        mc.playerController.attackEntity(mc.thePlayer, entityPlayer);
+    }
+
+    public static float[] getRotationsNeeded(Entity entity)
+    {
+        if(entity == null)
+            return null;
+        double diffX = entity.posX - Minecraft.getMinecraft().thePlayer.posX;
+        double diffY;
+        if(entity instanceof EntityLivingBase)
+        {
+            EntityLivingBase entityLivingBase = (EntityLivingBase)entity;
+            diffY =
+                    entityLivingBase.posY
+                            + entityLivingBase.getEyeHeight()
+                            * 0.9
+                            - (Minecraft.getMinecraft().thePlayer.posY + Minecraft
+                            .getMinecraft().thePlayer.getEyeHeight());
+        }else
+            diffY =
+                    (entity.getEntityBoundingBox().minY + entity.getEntityBoundingBox().maxY)
+                            / 2.0D
+                            - (Minecraft.getMinecraft().thePlayer.posY + Minecraft
+                            .getMinecraft().thePlayer.getEyeHeight());
+        double diffZ = entity.posZ - Minecraft.getMinecraft().thePlayer.posZ;
+        double dist = MathHelper.sqrt_double(diffX * diffX + diffZ * diffZ);
+        float yaw =
+                (float)(Math.atan2(diffZ, diffX) * 180.0D / Math.PI) - 90.0F;
+        float pitch = (float)-(Math.atan2(diffY, dist) * 180.0D / Math.PI);
+        return new float[]{
+                Minecraft.getMinecraft().thePlayer.rotationYaw
+                        + MathHelper.wrapAngleTo180_float(yaw
+                        - Minecraft.getMinecraft().thePlayer.rotationYaw),
+                Minecraft.getMinecraft().thePlayer.rotationPitch
+                        + MathHelper.wrapAngleTo180_float(pitch
+                        - Minecraft.getMinecraft().thePlayer.rotationPitch)};
+
+    }
+
+    public static void faceEntity(EntityLivingBase entity)
+    {
+        float[] rotations = getRotationsNeeded(entity);
+        if (rotations != null)
+        {
+            Minecraft.getMinecraft().thePlayer.rotationYaw = rotations[0];
+            Minecraft.getMinecraft().thePlayer.rotationPitch = rotations[1] +8;
+        }
+    }
+
+
+}
